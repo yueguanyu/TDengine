@@ -287,9 +287,18 @@ static bool checkIsHeaderFileEmpty(SQueryFilesInfo* pVnodeFilesInfo, int32_t vno
 }
 
 static void doCloseQueryFileInfoFD(SQueryFilesInfo* pVnodeFilesInfo) {
-  tclose(pVnodeFilesInfo->headerFd);
-  tclose(pVnodeFilesInfo->dataFd);
-  tclose(pVnodeFilesInfo->lastFd);
+  if (FD_VALID(pVnodeFilesInfo->headerFd)) {
+    close(pVnodeFilesInfo->headerFd);
+    pVnodeFilesInfo->headerFd = FD_INITIALIZER;
+  }
+  if (FD_VALID(pVnodeFilesInfo->dataFd)) {
+    close(pVnodeFilesInfo->dataFd);
+    pVnodeFilesInfo->dataFd = FD_INITIALIZER;
+  }
+  if (FD_VALID(pVnodeFilesInf->lastFd)) {
+    close(pVnodeFilesInfo->lastFd);
+    pVnodeFilesInfo->lastFd = FD_INITIALIZER;
+  }
 }
 
 static void doInitQueryFileInfoFD(SQueryFilesInfo* pVnodeFilesInfo) {

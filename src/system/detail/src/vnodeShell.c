@@ -493,7 +493,7 @@ int vnodeProcessRetrieveRequest(char *pMsg, int msgLen, SShellObj *pObj) {
   schedMsg.msg = msg;
   schedMsg.ahandle = pObj;
   schedMsg.fp = vnodeExecuteRetrieveReq;
-  taosScheduleTask(queryQhandle, &schedMsg);
+  vnodeAddToQueryQueue(&schedMsg);
 
   return msgLen;
 }

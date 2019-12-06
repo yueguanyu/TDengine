@@ -25,19 +25,40 @@
 void *   vnodeTmrCtrl;
 void **  rpcQhandle;
 void *   dmQhandle;
-void *   queryQhandle;
 int      tsVnodePeers = TSDB_VNODES_SUPPORT - 1;
 int      tsMaxQueues;
 uint32_t tsRebootTime;
+
+// only used to select a query queue, it is ok for it to overflow
+static uint32_t queryCounter;
+static uint32_t numOfQueryQueue;
+static void **  queryQhandle;
 
 void vnodeCleanUpSystem() {
   vnodeCleanUpVnodes();
 }
 
+void vnodeAddToQueryQueue(SSchedMsg *pMsg) {
+  uint32_t idx = atomic_fetch_add_32(&queryCounter, 1) % numOfQueryQueue;
+  taosScheduleTask(queryQhandle[idx], pMsg);
+}
+
 bool vnodeInitQueryHandle() {
-  int numOfThreads = tsRatioOfQueryThreads * tsNumOfCores * tsNumOfThreadsPerCore;
-  if (numOfThreads < 1) numOfThreads = 1;
-  queryQhandle = taosInitScheduler(tsNumOfVnodesPerCore * tsNumOfCores * tsSessionsPerVnode, numOfThreads, "query");
+  const uint32_t threadPerQueue = 2;
+
+  numOfQueryQueue = (uint32_t)(tsRatioOfQueryThreads * tsNumOfCores * tsNumOfThreadsPerCore / threadPerQueue);
+  if (numOfQueryQueue < 1) numOfQueryQueue = 1;
+  queryQhandle = calloc(numOfQueryQueue, sizeof(void*));
+  if (queryQhandle == NULL) return false;
+
+  uint32_t queueSize = tsNumOfVnodesPerCore * tsNumOfCores * tsSessionsPerVnode / numOfQueryQueue;
+  if (queueSize < 10) queueSize = 10;
+  for (uint32_t i = 0; i < numOfQueryQueue; ++i ) {
+    void* queue = taosInitScheduler(queueSize, threadPerQueue, "query");
+    if (queue == NULL) return false;
+    queryQhandle[i] = queue;
+  }
+
   return true;
 }
 

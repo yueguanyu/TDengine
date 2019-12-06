@@ -326,7 +326,6 @@ extern int        tsMeterSizeOnFile;
 extern uint32_t   tsRebootTime;
 extern void **    rpcQhandle;
 extern void *     dmQhandle;
-extern void *     queryQhandle;
 extern int        tsVnodePeers;
 extern int        tsMaxVnode;
 extern int        tsMaxQueues;
@@ -364,6 +363,8 @@ int vnodeRetrieveQueryResult(void *handle, int *pNum, char *argv[]);
 int vnodeSaveQueryResult(void *handle, char *data, int32_t* size);
 
 int vnodeRetrieveQueryInfo(void *handle, int *numOfRows, int *rowSize, int16_t *timePrec);
+
+void vnodeAddToQueryQueue(SSchedMsg *pMsg);
 
 void vnodeFreeQInfo(void *, bool);
 

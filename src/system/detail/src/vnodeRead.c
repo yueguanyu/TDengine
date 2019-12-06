@@ -413,7 +413,7 @@ void vnodeFreeQInfoInQueue(void *param) {
   schedMsg.msg = NULL;
   schedMsg.thandle = (void *)1;
   schedMsg.ahandle = param;
-  taosScheduleTask(queryQhandle, &schedMsg);
+  vnodeAddToQueryQueue(&schedMsg);
 }
 
 void vnodeFreeQInfo(void *param, bool decQueryRef) {
@@ -678,7 +678,7 @@ void *vnodeQueryInTimeRange(SMeterObj **pMetersObj, SSqlGroupbyExpr *pGroupbyExp
 
   dTrace("QInfo:%p set query flag and prepare runtime environment completed, wait for schedule", pQInfo);
 
-  taosScheduleTask(queryQhandle, &schedMsg);
+  vnodeAddToQueryQueue(&schedMsg);
   return pQInfo;
 
 _error:
@@ -790,7 +790,7 @@ void *vnodeQueryOnMultiMeters(SMeterObj **pMetersObj, SSqlGroupbyExpr *pGroupbyE
 
   dTrace("QInfo:%p set query flag and prepare runtime environment completed, wait for schedule", pQInfo);
 
-  taosScheduleTask(queryQhandle, &schedMsg);
+  vnodeAddToQueryQueue(&schedMsg);
   return pQInfo;
 
 _error:
@@ -887,7 +887,7 @@ int vnodeSaveQueryResult(void *handle, char *data, int32_t *size) {
       schedMsg.msg = NULL;
       schedMsg.thandle = (void *)1;
       schedMsg.ahandle = pQInfo;
-      taosScheduleTask(queryQhandle, &schedMsg);
+      vnodeAddToQueryQueue(&schedMsg);
     }
   }
 
