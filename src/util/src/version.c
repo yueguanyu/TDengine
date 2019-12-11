@@ -1,5 +1,5 @@
-char version[64] = "1.6.4.2";
+char version[64] = "1.6.4.3";
 char compatible_version[64] = "1.6.1.0";
-char gitinfo[128] = "b9a62d60dc1d4a41452a9bc94e3a0924485c3a75";
-char gitinfoOfInternal[128] = "e6445addc77e8c96dcb57221fa6ab5dcde0458f7";
-char buildinfo[512] = "Built by root at 2019-12-10 10:31";
+char gitinfo[128] = "7301d83d11a32e6d5f72f15be0f4667cf96fc567";
+char gitinfoOfInternal[128] = "";
+char buildinfo[512] = "Built by ubuntu at 2019-12-11 09:21";
