@@ -21,40 +21,26 @@
 #include "shellCommand.h"
 #include "ttime.h"
 #include "tutil.h"
-
+#include "taosdef.h"
+#include "taoserror.h"
+#include "tglobal.h"
 #include <regex.h>
 
 /**************** Global variables ****************/
-#ifdef WINDOWS
-  char    CLIENT_VERSION[] = "Welcome to the TDengine shell from windows, client version:%s ";
-#elif defined(DARWIN)
-  char    CLIENT_VERSION[] = "Welcome to the TDengine shell from mac, client version:%s ";
-#else
-  #ifdef CLUSTER
-    char    CLIENT_VERSION[] = "Welcome to the TDengine shell from linux, enterprise client version:%s ";
-  #else
-    char    CLIENT_VERSION[] = "Welcome to the TDengine shell from linux, community client version:%s ";
-  #endif
-#endif
-
-#ifdef CLUSTER
- char      SERVER_VERSION[] = "enterprise server version:%s\nCopyright (c) 2017 by TAOS Data, Inc. All rights reserved.\n\n";
-#else
- char      SERVER_VERSION[] = "community server version:%s\nCopyright (c) 2017 by TAOS Data, Inc. All rights reserved.\n\n";
-#endif
-
+char      CLIENT_VERSION[] = "Welcome to the TDengine shell from %s, Client Version:%s\n"
+                             "Copyright (c) 2017 by TAOS Data, Inc. All rights reserved.\n\n";
 char      PROMPT_HEADER[] = "taos> ";
 char      CONTINUE_PROMPT[] = "   -> ";
 int       prompt_size = 6;
 TAOS_RES *result = NULL;
-History   history;
+SShellHistory   history;
 
 /*
  * FUNCTION: Initialize the shell.
  */
-TAOS *shellInit(struct arguments *args) {
+TAOS *shellInit(SShellArguments *args) {
   printf("\n");
-  printf(CLIENT_VERSION, taos_get_client_info());
+  printf(CLIENT_VERSION, tsOsName, taos_get_client_info());
   fflush(stdout);
 
   // set options before initializing
@@ -74,15 +60,13 @@ TAOS *shellInit(struct arguments *args) {
 
   taos_init();
   /*
-   * set tsMetricMetaKeepTimer = 3000ms
-   * set tsMeterMetaKeepTimer = 3000ms
+   * set tsTableMetaKeepTimer = 3000ms
    * means not save cache in shell
    */
-  tsMetricMetaKeepTimer = 3;
-  tsMeterMetaKeepTimer = 3000;
+  tsTableMetaKeepTimer = 3000;
 
   // Connect to the database.
-  TAOS *con = taos_connect(args->host, args->user, args->password, args->database, tsMgmtShellPort);
+  TAOS *con = taos_connect(args->host, args->user, args->password, args->database, args->port);
   if (con == NULL) {
     return con;
   }
@@ -111,15 +95,13 @@ TAOS *shellInit(struct arguments *args) {
     exit(EXIT_SUCCESS);
   }
 
-#ifdef LINUX
+#ifndef WINDOWS
   if (args->dir[0] != 0) {
     source_dir(con, args);
     taos_close(con);
     exit(EXIT_SUCCESS);
   }
 #endif
-
-  printf(SERVER_VERSION, taos_get_server_info(con));
 
   return con;
 }
@@ -182,10 +164,10 @@ void shellReplaceCtrlChar(char *str) {
   *pstr = '\0';
 }
 
-void shellRunCommand(TAOS *con, char *command) {
+int32_t shellRunCommand(TAOS *con, char *command) {
   /* If command is empty just return */
   if (regex_match(command, "^[ \t;]*$", REG_EXTENDED)) {
-    return;
+    return 0;
   }
 
   /* Update the history vector. */
@@ -209,11 +191,11 @@ void shellRunCommand(TAOS *con, char *command) {
   if (regex_match(command, "^[ \t]*(quit|q|exit)[ \t;]*$", REG_EXTENDED | REG_ICASE)) {
     taos_close(con);
     write_history();
-    exitShell();
+    return -1;
   } else if (regex_match(command, "^[\t ]*clear[ \t;]*$", REG_EXTENDED | REG_ICASE)) {
     // If clear the screen.
     system("clear");
-    return;
+    return 0;
   } else if (regex_match(command, "^[ \t]*source[\t ]+[^ ]+[ \t;]*$", REG_EXTENDED | REG_ICASE)) {
     /* If source file. */
     char *c_ptr = strtok(command, " ;");
@@ -225,6 +207,8 @@ void shellRunCommand(TAOS *con, char *command) {
   } else {
     shellRunCommandOnServer(con, command);
   }
+  
+  return 0;
 }
 
 void shellRunCommandOnServer(TAOS *con, char command[]) {
@@ -300,7 +284,7 @@ void shellRunCommandOnServer(TAOS *con, char command[]) {
 /* Function to do regular expression check */
 int regex_match(const char *s, const char *reg, int cflags) {
   regex_t regex;
-  char    msgbuf[100];
+  char    msgbuf[100] = {0};
 
   /* Compile regular expression */
   if (regcomp(&regex, reg, cflags) != 0) {
@@ -364,6 +348,8 @@ int shellDumpResult(TAOS *con, char *fname, int *error_no, bool printMode) {
   TAOS_FIELD *fields = taos_fetch_fields(result);
 
   row = taos_fetch_row(result);
+  int32_t* length = taos_fetch_lengths(result);
+  
   char t_str[TSDB_MAX_BYTES_PER_ROW] = "\0";
   int  l[TSDB_MAX_COLUMNS] = {0};
   int  maxLenColumnName = 0;
@@ -471,7 +457,7 @@ int shellDumpResult(TAOS *con, char *fname, int *error_no, bool printMode) {
               case TSDB_DATA_TYPE_BINARY:
               case TSDB_DATA_TYPE_NCHAR:
                 memset(t_str, 0, TSDB_MAX_BYTES_PER_ROW);
-                memcpy(t_str, row[i], fields[i].bytes);
+                memcpy(t_str, row[i], length[i]);
                 /* printf("%-*s|",max(fields[i].bytes, strlen(fields[i].name)),
                  * t_str); */
                 /* printf("%-*s|", l[i], t_str); */
@@ -546,7 +532,8 @@ int shellDumpResult(TAOS *con, char *fname, int *error_no, bool printMode) {
               case TSDB_DATA_TYPE_BINARY:
               case TSDB_DATA_TYPE_NCHAR:
                 memset(t_str, 0, TSDB_MAX_BYTES_PER_ROW);
-                memcpy(t_str, row[i], fields[i].bytes);
+                memcpy(t_str, row[i], length[i]);
+                
                 l[i] = MAX(fields[i].bytes, strlen(fields[i].name));
                 shellPrintNChar(t_str, l[i], printMode);
                 break;
@@ -624,7 +611,7 @@ int shellDumpResult(TAOS *con, char *fname, int *error_no, bool printMode) {
               case TSDB_DATA_TYPE_BINARY:
               case TSDB_DATA_TYPE_NCHAR:
                 memset(t_str, 0, TSDB_MAX_BYTES_PER_ROW);
-                memcpy(t_str, row[i], fields[i].bytes);
+                memcpy(t_str, row[i], length[i]);
                 fprintf(fp, "\'%s\'", t_str);
                 break;
               case TSDB_DATA_TYPE_TIMESTAMP:
@@ -751,7 +738,7 @@ int isCommentLine(char *line) {
 void source_file(TAOS *con, char *fptr) {
   wordexp_t full_path;
   int       read_len = 0;
-  char *    cmd = malloc(MAX_COMMAND_SIZE);
+  char *    cmd = calloc(1, MAX_COMMAND_SIZE);
   size_t    cmd_len = 0;
   char *    line = NULL;
   size_t    line_len = 0;
@@ -817,11 +804,18 @@ void source_file(TAOS *con, char *fptr) {
 }
 
 void shellGetGrantInfo(void *con) {
-#ifdef CLUSTER
+  return;
+
   char sql[] = "show grants";
 
-  if (taos_query(con, sql)) {
-    fprintf(stdout, "\n");
+  int code = taos_query(con, sql);
+
+  if (code != TSDB_CODE_SUCCESS) {
+    if (code == TSDB_CODE_OPS_NOT_SUPPORT) {
+      fprintf(stdout, "Server is Community Edition, version is %s\n\n", taos_get_server_info(con));
+    } else {
+      fprintf(stderr, "Failed to check Server Edition, Reason:%d:%s\n\n", taos_errno(con), taos_errstr(con));
+    }
     return;
   }
 
@@ -843,18 +837,18 @@ void shellGetGrantInfo(void *con) {
       exit(0);
     }
 
-    char version[32] = {0};
+    char serverVersion[32] = {0};
     char expiretime[32] = {0};
     char expired[32] = {0};
 
-    memcpy(version, row[0], fields[0].bytes);
+    memcpy(serverVersion, row[0], fields[0].bytes);
     memcpy(expiretime, row[1], fields[1].bytes);
     memcpy(expired, row[2], fields[2].bytes);
 
     if (strcmp(expiretime, "unlimited") == 0) {
-      fprintf(stdout, "This is the %s version and will never expire.\n", version);
+      fprintf(stdout, "Server is Enterprise %s Edition, version is %s and will never expire.\n", serverVersion, taos_get_server_info(con));
     } else {
-      fprintf(stdout, "This is the %s version and will expire at %s.\n", version, expiretime);
+      fprintf(stdout, "Server is Enterprise %s Edition, version is %s and will expire at %s.\n", serverVersion, taos_get_server_info(con), expiretime);
     }
 
     taos_free_result(result);
@@ -862,5 +856,4 @@ void shellGetGrantInfo(void *con) {
   }
 
   fprintf(stdout, "\n");
-#endif
 }

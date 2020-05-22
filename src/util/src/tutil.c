@@ -20,12 +20,14 @@
 #endif
 
 #include "tcrc32c.h"
-#include "tglobalcfg.h"
+#include "tglobal.h"
 #include "ttime.h"
-#include "ttypes.h"
+#include "taosdef.h"
 #include "tutil.h"
-#include "tlog.h"
+#include "tulog.h"
 #include "taoserror.h"
+
+int32_t tmpFileSerialNum = 0;
 
 int32_t strdequote(char *z) {
   if (z == NULL) {
@@ -164,7 +166,7 @@ char* strtolower(char *dst, const char *src) {
 
 char *paGetToken(char *string, char **token, int32_t *tokenLen) {
   char quote = 0;
-
+  
   while (*string != 0) {
     if (*string == ' ' || *string == '\t') {
       ++string;
@@ -334,7 +336,7 @@ int32_t taosByteArrayToHexStr(char bytes[], int32_t len, char hexstr[]) {
   char    hexval[16] = {'0', '1', '2', '3', '4', '5', '6', '7', '8', '9', 'a', 'b', 'c', 'd', 'e', 'f'};
 
   for (i = 0; i < len; i++) {
-    hexstr[i * 2] = hexval[((bytes[i] >> 4) & 0xF)];
+    hexstr[i * 2] = hexval[((bytes[i] >> 4u) & 0xF)];
     hexstr[(i * 2) + 1] = hexval[(bytes[i]) & 0x0F];
   }
 
@@ -399,6 +401,27 @@ int32_t taosFileRename(char *fullPath, char *suffix, char delimiter, char **dstP
   (*dstPath)[len] = 0;
 
   return rename(fullPath, *dstPath);
+}
+
+void getTmpfilePath(const char *fileNamePrefix, char *dstPath) {
+  const char* tdengineTmpFileNamePrefix = "tdengine-";
+  
+  char tmpPath[PATH_MAX] = {0};
+
+#ifdef WINDOWS
+  char *tmpDir = getenv("tmp");
+  if (tmpDir == NULL) {
+    tmpDir = "";
+  }
+#else
+  char *tmpDir = "/tmp/";
+#endif
+  int64_t ts = taosGetTimestampUs();
+  strcpy(tmpPath, tmpDir);
+  strcat(tmpPath, tdengineTmpFileNamePrefix);
+  strcat(tmpPath, fileNamePrefix);
+  strcat(tmpPath, "-%d-%"PRIu64"-%u-%"PRIu64);
+  snprintf(dstPath, PATH_MAX, tmpPath, getpid(), taosGetPthreadId(), atomic_add_fetch_32(&tmpFileSerialNum, 1), ts);
 }
 
 int tasoUcs4Compare(void* f1_ucs4, void *f2_ucs4, int bytes) {
@@ -467,21 +490,26 @@ bool taosUcs4ToMbs(void *ucs4, int32_t ucs4_max_len, char *mbs) {
 #endif
 }
 
-bool taosMbsToUcs4(char *mbs, int32_t mbs_len, char *ucs4, int32_t ucs4_max_len) {
+bool taosMbsToUcs4(char *mbs, size_t mbsLength, char *ucs4, int32_t ucs4_max_len, size_t* len) {
   memset(ucs4, 0, ucs4_max_len);
 #ifdef USE_LIBICONV
   iconv_t cd = iconv_open(DEFAULT_UNICODE_ENCODEC, tsCharset);
-  size_t ucs4_input_len = mbs_len;
-  size_t outLen = ucs4_max_len;
-  if (iconv(cd, &mbs, &ucs4_input_len, &ucs4, &outLen) == -1) {
+  size_t ucs4_input_len = mbsLength;
+  size_t outLeft = ucs4_max_len;
+  if (iconv(cd, &mbs, &ucs4_input_len, &ucs4, &outLeft) == -1) {
     iconv_close(cd);
     return false;
   }
+  
   iconv_close(cd);
+  if (len != NULL) {
+    *len = ucs4_max_len - outLeft;
+  }
+  
   return true;
 #else
   mbstate_t state = {0};
-  int32_t len = mbsnrtowcs((wchar_t *) ucs4, (const char **) &mbs, mbs_len, ucs4_max_len / 4, &state);
+  int32_t len = mbsnrtowcs((wchar_t *) ucs4, (const char **) &mbs, mbsLength, ucs4_max_len / 4, &state);
   return len >= 0;
 #endif
 }
@@ -536,18 +564,18 @@ int taosCheckVersion(char *input_client_version, char *input_server_version, int
   strcpy(server_version, input_server_version);
 
   if (!taosGetVersionNumber(client_version, clientVersionNumber)) {
-    pError("invalid client version:%s", client_version);
+    uError("invalid client version:%s", client_version);
     return TSDB_CODE_INVALID_CLIENT_VERSION;
   }
 
   if (!taosGetVersionNumber(server_version, serverVersionNumber)) {
-    pError("invalid server version:%s", server_version);
+    uError("invalid server version:%s", server_version);
     return TSDB_CODE_INVALID_CLIENT_VERSION;
   }
 
   for(int32_t i = 0; i < comparedSegments; ++i) {
     if (clientVersionNumber[i] != serverVersionNumber[i]) {
-      tscError("the %d-th number of server version:%s not matched with client version:%s", i, server_version, version);
+      uError("the %d-th number of server version:%s not matched with client version:%s", i, server_version, version);
       return TSDB_CODE_INVALID_CLIENT_VERSION;
     }
   }
@@ -560,21 +588,18 @@ char *taosIpStr(uint32_t ipInt) {
   static int ipStrIndex = 0;
 
   char *ipStr = ipStrArray[(ipStrIndex++) % 3];
-  sprintf(ipStr, "0x%x:%u.%u.%u.%u", ipInt, ipInt & 0xFF, (ipInt >> 8) & 0xFF, (ipInt >> 16) & 0xFF, (uint8_t)(ipInt >> 24));
+  //sprintf(ipStr, "0x%x:%u.%u.%u.%u", ipInt, ipInt & 0xFF, (ipInt >> 8) & 0xFF, (ipInt >> 16) & 0xFF, (uint8_t)(ipInt >> 24));
+  sprintf(ipStr, "%u.%u.%u.%u", ipInt & 0xFF, (ipInt >> 8) & 0xFF, (ipInt >> 16) & 0xFF, (uint8_t)(ipInt >> 24));
   return ipStr;
 }
 
-#ifndef CLUSTER
-void taosCleanupTier() {}
-#endif
-
-FORCE_INLINE float taos_align_get_float(char* pBuf) {
+FORCE_INLINE float taos_align_get_float(const char* pBuf) {
   float fv = 0; 
   *(int32_t*)(&fv) = *(int32_t*)pBuf;
   return fv; 
 }
 
-FORCE_INLINE double taos_align_get_double(char* pBuf) {
+FORCE_INLINE double taos_align_get_double(const char* pBuf) {
   double dv = 0; 
   *(int64_t*)(&dv) = *(int64_t*)pBuf;
   return dv; 
@@ -597,4 +622,73 @@ char *taosCharsetReplace(char *charsetstr) {
   }
 
   return strdup(charsetstr);
+}
+
+void *tmalloc(size_t size) {
+  if (size <= 0) return NULL;
+
+  void *ret = malloc(size + sizeof(size_t));
+  if (ret == NULL) return NULL;
+
+  *(size_t *)ret = size;
+
+  return (void *)((char *)ret + sizeof(size_t));
+}
+
+void *tcalloc(size_t nmemb, size_t size) {
+  size_t tsize = nmemb * size;
+  void * ret = tmalloc(tsize);
+  if (ret == NULL) return NULL;
+
+  tmemset(ret, 0);
+  return ret;
+}
+
+size_t tsizeof(void *ptr) { return (ptr) ? (*(size_t *)((char *)ptr - sizeof(size_t))) : 0; }
+
+void tmemset(void *ptr, int c) { memset(ptr, c, tsizeof(ptr)); }
+
+void * trealloc(void *ptr, size_t size) {
+  if (ptr == NULL) return tmalloc(size);
+
+  if (size <= tsizeof(ptr)) return ptr;
+
+  void * tptr = (void *)((char *)ptr - sizeof(size_t));
+  size_t tsize = size + sizeof(size_t);
+  tptr = realloc(tptr, tsize);
+  if (tptr == NULL) return NULL;
+
+  *(size_t *)tptr = size;
+
+  return (void *)((char *)tptr + sizeof(size_t));
+}
+
+void tzfree(void *ptr) {
+  if (ptr) {
+    free((void *)((char *)ptr - sizeof(size_t)));
+  }
+}
+
+void taosRemoveDir(char *rootDir) {
+  DIR *dir = opendir(rootDir);
+  if (dir == NULL) return;
+
+  struct dirent *de = NULL;
+  while ((de = readdir(dir)) != NULL) {
+    if (strcmp(de->d_name, ".") == 0 || strcmp(de->d_name, "..") == 0) continue;
+     
+    char filename[1024];
+    snprintf(filename, 1023, "%s/%s", rootDir, de->d_name);
+    if (de->d_type & DT_DIR) {
+      taosRemoveDir(filename);
+    } else {
+      remove(filename);
+      uPrint("file:%s is removed", filename);
+    }
+  }
+
+  closedir(dir);
+  rmdir(rootDir);
+
+  uPrint("dir:%s is removed", rootDir);
 }

@@ -12,226 +12,288 @@
  * You should have received a copy of the GNU Affero General Public License
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
+#ifndef _TD_TSDB_H_
+#define _TD_TSDB_H_
 
-#ifndef _tsdb_global_header_
-#define _tsdb_global_header_
+#include <pthread.h>
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "tdataformat.h"
+#include "tname.h"
+#include "taosdef.h"
+#include "taosmsg.h"
+#include "tarray.h"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-#include <stdint.h>
-#include "tglobalcfg.h"
+#define TSDB_VERSION_MAJOR 1
+#define TSDB_VERSION_MINOR 0
 
-#define TSDB__packed
+#define TSDB_INVALID_SUPER_TABLE_ID -1
 
-#ifdef TSKEY32
-#define TSKEY int32_t;
-#else
-#define TSKEY int64_t
-#endif
+#define TSDB_STATUS_COMMIT_START 1
+#define TSDB_STATUS_COMMIT_OVER  2
 
-#define TSDB_TRUE 1
-#define TSDB_FALSE 0
-#define TSDB_OK 0
-#define TSDB_ERR -1
+// --------- TSDB APPLICATION HANDLE DEFINITION
+typedef struct {
+  void *appH;
+  void *cqH;
+  int (*notifyStatus)(void *, int status);
+  int (*eventCallBack)(void *);
+} STsdbAppH;
 
-#define TS_PATH_DELIMITER "."
+// --------- TSDB REPOSITORY CONFIGURATION DEFINITION
+typedef struct {
+  int32_t tsdbId;
+  int32_t cacheBlockSize;
+  int32_t totalBlocks;
+  int32_t maxTables;            // maximum number of tables this repository can have
+  int32_t daysPerFile;          // day per file sharding policy
+  int32_t keep;                 // day of data to keep
+  int32_t keep1;
+  int32_t keep2;
+  int32_t minRowsPerFileBlock;  // minimum rows per file block
+  int32_t maxRowsPerFileBlock;  // maximum rows per file block
+  int32_t commitTime;
+  int8_t  precision;
+  int8_t  compression;
+} STsdbCfg;
 
-#define TSDB_TIME_PRECISION_MILLI 0
-#define TSDB_TIME_PRECISION_MICRO 1
+void      tsdbSetDefaultCfg(STsdbCfg *pCfg);
+STsdbCfg *tsdbCreateDefaultCfg();
+void      tsdbFreeCfg(STsdbCfg *pCfg);
 
-#define TSDB_TIME_PRECISION_MILLI_STR "ms"
-#define TSDB_TIME_PRECISION_MICRO_STR "us"
+// --------- TSDB REPOSITORY DEFINITION
+typedef void TsdbRepoT;  // use void to hide implementation details from outside
 
-#define TSDB_DATA_TYPE_BOOL       1     // 1 bytes
-#define TSDB_DATA_TYPE_TINYINT    2     // 1 byte
-#define TSDB_DATA_TYPE_SMALLINT   3     // 2 bytes
-#define TSDB_DATA_TYPE_INT        4     // 4 bytes
-#define TSDB_DATA_TYPE_BIGINT     5     // 8 bytes
-#define TSDB_DATA_TYPE_FLOAT      6     // 4 bytes
-#define TSDB_DATA_TYPE_DOUBLE     7     // 8 bytes
-#define TSDB_DATA_TYPE_BINARY     8     // string
-#define TSDB_DATA_TYPE_TIMESTAMP  9     // 8 bytes
-#define TSDB_DATA_TYPE_NCHAR      10    // unicode string
+int        tsdbCreateRepo(char *rootDir, STsdbCfg *pCfg, void *limiter);
+int32_t    tsdbDropRepo(TsdbRepoT *repo);
+TsdbRepoT *tsdbOpenRepo(char *tsdbDir, STsdbAppH *pAppH);
+int32_t    tsdbCloseRepo(TsdbRepoT *repo, int toCommit);
+int32_t    tsdbConfigRepo(TsdbRepoT *repo, STsdbCfg *pCfg);
 
-#define TSDB_KEYSIZE              sizeof(TSKEY)
+// --------- TSDB TABLE DEFINITION
+typedef struct {
+  uint64_t uid;  // the unique table ID
+  int32_t  tid;  // the table ID in the repository.
+} STableId;
 
-#if LINUX
-  #define TSDB_NCHAR_SIZE         sizeof(wchar_t)
-#else
-  #define TSDB_NCHAR_SIZE         4
-#endif
-//#define TSDB_CHAR_TERMINATED_SPACE 1
+// --------- TSDB TABLE configuration
+typedef struct {
+  ETableType type;
+  char *     name;
+  STableId   tableId;
+  int32_t    sversion;
+  char *     sname;  // super table name
+  uint64_t   superUid;
+  STSchema * schema;
+  STSchema * tagSchema;
+  SDataRow   tagValues;
+} STableCfg;
 
-#define TSDB_RELATION_INVALID     0
-#define TSDB_RELATION_LESS        1
-#define TSDB_RELATION_LARGE       2
-#define TSDB_RELATION_EQUAL       3
-#define TSDB_RELATION_LESS_EQUAL  4
-#define TSDB_RELATION_LARGE_EQUAL 5
-#define TSDB_RELATION_NOT_EQUAL   6
-#define TSDB_RELATION_LIKE        7
+int  tsdbInitTableCfg(STableCfg *config, ETableType type, uint64_t uid, int32_t tid);
+int  tsdbTableSetSuperUid(STableCfg *config, uint64_t uid);
+int  tsdbTableSetSchema(STableCfg *config, STSchema *pSchema, bool dup);
+int  tsdbTableSetTagSchema(STableCfg *config, STSchema *pSchema, bool dup);
+int  tsdbTableSetTagValue(STableCfg *config, SDataRow row, bool dup);
+int  tsdbTableSetName(STableCfg *config, char *name, bool dup);
+int  tsdbTableSetSName(STableCfg *config, char *sname, bool dup);
+void tsdbClearTableCfg(STableCfg *config);
 
-#define TSDB_RELATION_AND         8
-#define TSDB_RELATION_OR          9
-#define TSDB_RELATION_NOT         10
+int32_t tsdbGetTableTagVal(TsdbRepoT *repo, STableId* id, int32_t colId, int16_t *type, int16_t *bytes, char **val);
+char* tsdbGetTableName(TsdbRepoT *repo, const STableId* id, int16_t* bytes);
 
-#define TSDB_BINARY_OP_ADD        11
-#define TSDB_BINARY_OP_SUBTRACT   12
-#define TSDB_BINARY_OP_MULTIPLY   13
-#define TSDB_BINARY_OP_DIVIDE     14
-#define TSDB_BINARY_OP_REMAINDER  15
-#define TSDB_USERID_LEN           9
-#define TS_PATH_DELIMITER_LEN     1
+int   tsdbCreateTable(TsdbRepoT *repo, STableCfg *pCfg);
+int   tsdbDropTable(TsdbRepoT *pRepo, STableId tableId);
+int   tsdbAlterTable(TsdbRepoT *repo, STableCfg *pCfg);
+TSKEY tsdbGetTableLastKey(TsdbRepoT *repo, uint64_t uid);
 
-#define TSDB_METER_ID_LEN_MARGIN  10
-#define TSDB_METER_ID_LEN         (TSDB_DB_NAME_LEN+TSDB_METER_NAME_LEN+2*TS_PATH_DELIMITER_LEN+TSDB_USERID_LEN+TSDB_METER_ID_LEN_MARGIN) //TSDB_DB_NAME_LEN+TSDB_METER_NAME_LEN+2*strlen(TS_PATH_DELIMITER)+strlen(USERID)
-#define TSDB_UNI_LEN              24
-#define TSDB_USER_LEN             TSDB_UNI_LEN
-#define TSDB_ACCT_LEN             TSDB_UNI_LEN
-#define TSDB_PASSWORD_LEN         TSDB_UNI_LEN
+uint32_t tsdbGetFileInfo(TsdbRepoT *repo, char *name, uint32_t *index, int32_t *size);
 
-#define TSDB_MAX_COLUMNS          256
-#define TSDB_MIN_COLUMNS          2       //PRIMARY COLUMN(timestamp) + other columns
+// the TSDB repository info
+typedef struct STsdbRepoInfo {
+  STsdbCfg tsdbCfg;
+  int64_t  version;            // version of the repository
+  int64_t  tsdbTotalDataSize;  // the original inserted data size
+  int64_t  tsdbTotalDiskSize;  // the total disk size taken by this TSDB repository
+  // TODO: Other informations to add
+} STsdbRepoInfo;
+STsdbRepoInfo *tsdbGetStatus(TsdbRepoT *pRepo);
 
-#define TSDB_METER_NAME_LEN       64
-#define TSDB_DB_NAME_LEN          32
-#define TSDB_COL_NAME_LEN         64
-#define TSDB_MAX_SAVED_SQL_LEN    TSDB_MAX_COLUMNS * 16
-#define TSDB_MAX_SQL_LEN          TSDB_PAYLOAD_SIZE
-#define TSDB_MAX_ALLOWED_SQL_LEN  (8*1024*1024U)          // sql length should be less than 6mb
+// the meter information report structure
+typedef struct {
+  STableCfg tableCfg;
+  int64_t   version;
+  int64_t   tableTotalDataSize;  // In bytes
+  int64_t   tableTotalDiskSize;  // In bytes
+} STableInfo;
+STableInfo *tsdbGetTableInfo(TsdbRepoT *pRepo, STableId tid);
 
-#define TSDB_MAX_BYTES_PER_ROW    TSDB_MAX_COLUMNS * 16
-#define TSDB_MAX_TAGS_LEN         512
-#define TSDB_MAX_TAGS             32
-
-#define TSDB_AUTH_LEN             16
-#define TSDB_KEY_LEN              16
-#define TSDB_VERSION_LEN          12
-#define TSDB_STREET_LEN           64
-#define TSDB_CITY_LEN             20
-#define TSDB_STATE_LEN            20
-#define TSDB_COUNTRY_LEN          20
-#define TSDB_VNODES_SUPPORT       6
-#define TSDB_MGMT_SUPPORT         4
-#define TSDB_LOCALE_LEN           64
-#define TSDB_TIMEZONE_LEN         64
-
-#define TSDB_IPv4ADDR_LEN      	  16
-#define TSDB_FILENAME_LEN         128
-#define TSDB_METER_VNODE_BITS     20
-#define TSDB_METER_SID_MASK       0xFFFFF
-#define TSDB_SHELL_VNODE_BITS     24
-#define TSDB_SHELL_SID_MASK       0xFF
-#define TSDB_HTTP_TOKEN_LEN       20
-#define TSDB_SHOW_SQL_LEN         32
-
-#define TSDB_METER_STATE_OFFLINE  0
-#define TSDB_METER_STATE_ONLLINE  1
-
-#define TSDB_DEFAULT_PKT_SIZE     65480  //same as RPC_MAX_UDP_SIZE
-
-#define TSDB_PAYLOAD_SIZE         (TSDB_DEFAULT_PKT_SIZE - 100)
-#define TSDB_DEFAULT_PAYLOAD_SIZE 1024   // default payload size
-#define TSDB_EXTRA_PAYLOAD_SIZE   128    // extra bytes for auth
-#define TSDB_SQLCMD_SIZE          1024
-#define TSDB_MAX_VNODES           256
-#define TSDB_MIN_VNODES           50
-#define TSDB_INVALID_VNODE_NUM    0
-
-#define TSDB_DNODE_ROLE_ANY       0
-#define TSDB_DNODE_ROLE_MGMT      1
-#define TSDB_DNODE_ROLE_VNODE     2
-
-#define TSDB_MAX_MPEERS           5
-#define TSDB_MAX_MGMT_IPS         (TSDB_MAX_MPEERS+1)
-
-#define TSDB_REPLICA_MIN_NUM      1
-/*
- * this is defined in CMakeList.txt
+// -- FOR INSERT DATA
+/**
+ * Insert data to a table in a repository
+ * @param pRepo the TSDB repository handle
+ * @param pData the data to insert (will give a more specific description)
+ *
+ * @return the number of points inserted, -1 for failure and the error number is set
  */
-//#define TSDB_REPLICA_MAX_NUM      3
+int32_t tsdbInsertData(TsdbRepoT *repo, SSubmitMsg *pMsg, SShellSubmitRspMsg * pRsp) ;
 
-#define TSDB_TBNAME_COLUMN_INDEX       (-1)
-#define TSDB_MULTI_METERMETA_MAX_NUM    100000  // maximum batch size allowed to load metermeta
+// -- FOR QUERY TIME SERIES DATA
 
-//default value == 10
-#define TSDB_FILE_MIN_PARTITION_RANGE   1         //minimum partition range of vnode file in days
-#define TSDB_FILE_MAX_PARTITION_RANGE   3650      //max partition range of vnode file in days
+typedef void *TsdbQueryHandleT;  // Use void to hide implementation details
 
-#define TSDB_DATA_MIN_RESERVE_DAY       1        // data in db to be reserved.
-#define TSDB_DATA_DEFAULT_RESERVE_DAY   3650     // ten years
+// query condition to build vnode iterator
+typedef struct STsdbQueryCond {
+  STimeWindow      twindow;
+  int32_t          order;  // desc|asc order to iterate the data block
+  int32_t          numOfCols;
+  SColumnInfo     *colList;
+} STsdbQueryCond;
 
-#define TSDB_MIN_COMPRESSION_LEVEL      0
-#define TSDB_MAX_COMPRESSION_LEVEL      2
+typedef struct SDataBlockInfo {
+  STimeWindow window;
+  int32_t     rows;
+  int32_t     numOfCols;
+  int64_t     uid;
+  int32_t     tid;
+} SDataBlockInfo;
 
-#define TSDB_MIN_COMMIT_TIME_INTERVAL   30
-#define TSDB_MAX_COMMIT_TIME_INTERVAL   40960
+typedef struct {
+  size_t  numOfTables;
+  SArray *pGroupList;
+} STableGroupInfo;
 
-#define TSDB_MIN_ROWS_IN_FILEBLOCK      200
-#define TSDB_MAX_ROWS_IN_FILEBLOCK      500000
+typedef struct SQueryRowCond {
+  int32_t rel;
+  TSKEY   ts;
+} SQueryRowCond;
 
-#define TSDB_MIN_CACHE_BLOCK_SIZE       100
-#define TSDB_MAX_CACHE_BLOCK_SIZE       104857600
+typedef void *TsdbPosT;
 
-#define TSDB_MIN_CACHE_BLOCKS           100
-#define TSDB_MAX_CACHE_BLOCKS           409600
-
-#define TSDB_MIN_AVG_BLOCKS             2
-#define TSDB_MAX_AVG_BLOCKS             2048
-#define TSDB_DEFAULT_AVG_BLOCKS         4
-
-/*
- * There is a bug in function taosAllocateId.
- * When "create database tables 1" is executed, the wrong sid is assigned, so the minimum value is set to 2.
+/**
+ * Get the data block iterator, starting from position according to the query condition
+ *
+ * @param tsdb       tsdb handle
+ * @param pCond      query condition, including time window, result set order, and basic required columns for each block
+ * @param groupInfo  tableId list in the form of set, seperated into different groups according to group by condition
+ * @return
  */
-#define TSDB_MIN_TABLES_PER_VNODE       2
-#define TSDB_MAX_TABLES_PER_VNODE       220000
+TsdbQueryHandleT *tsdbQueryTables(TsdbRepoT *tsdb, STsdbQueryCond *pCond, STableGroupInfo *groupInfo);
 
-#define TSDB_MAX_JOIN_TABLE_NUM         5
-
-#define TSDB_MAX_BINARY_LEN            (TSDB_MAX_BYTES_PER_ROW-TSDB_KEYSIZE)
-#define TSDB_MAX_NCHAR_LEN             (TSDB_MAX_BYTES_PER_ROW-TSDB_KEYSIZE)
-#define PRIMARYKEY_TIMESTAMP_COL_INDEX  0
-
-#define TSDB_DATA_BOOL_NULL             0x02
-#define TSDB_DATA_TINYINT_NULL          0x80
-#define TSDB_DATA_SMALLINT_NULL         0x8000
-#define TSDB_DATA_INT_NULL              0x80000000
-#define TSDB_DATA_BIGINT_NULL           0x8000000000000000L
-
-#define TSDB_DATA_FLOAT_NULL            0x7FF00000              // it is an NAN
-#define TSDB_DATA_DOUBLE_NULL           0x7FFFFF0000000000L     // an NAN
-#define TSDB_DATA_NCHAR_NULL            0xFFFFFFFF
-#define TSDB_DATA_BINARY_NULL           0xFF
-
-#define TSDB_DATA_NULL_STR              "NULL"
-#define TSDB_DATA_NULL_STR_L            "null"
-
-#define TSDB_MAX_RPC_THREADS            5
-
-#define TSDB_QUERY_TYPE_QUERY                          0         // normal query
-#define TSDB_QUERY_TYPE_FREE_RESOURCE                  0x01U     // free qhandle at vnode
-
-/*
- * 1. ordinary sub query for select * from super_table
- * 2. all sqlobj generated by createSubqueryObj with this flag
+/**
+ * Get the last row of the given query time window for all the tables in STableGroupInfo object.
+ * Note that only one data block with only row will be returned while invoking retrieve data block function for
+ * all tables in this group.
+ *
+ * @param tsdb        tsdb handle
+ * @param pCond       query condition, including time window, result set order, and basic required columns for each block
+ * @param groupInfo   tableId list.
+ * @return
  */
-#define TSDB_QUERY_TYPE_SUBQUERY                       0x02U
-#define TSDB_QUERY_TYPE_STABLE_SUBQUERY                0x04U     // two-stage subquery for super table
+TsdbQueryHandleT tsdbQueryLastRow(TsdbRepoT *tsdb, STsdbQueryCond *pCond, STableGroupInfo *groupInfo);
 
-#define TSDB_QUERY_TYPE_TABLE_QUERY                    0x08U     // query ordinary table; below only apply to client side
-#define TSDB_QUERY_TYPE_STABLE_QUERY                   0x10U    // query on super table
-#define TSDB_QUERY_TYPE_JOIN_QUERY                     0x20U    // join query
-#define TSDB_QUERY_TYPE_PROJECTION_QUERY               0x40U    // select *,columns... query
-#define TSDB_QUERY_TYPE_JOIN_SEC_STAGE                 0x80U    // join sub query at the second stage
+/**
+ * move to next block if exists
+ *
+ * @param pQueryHandle
+ * @return
+ */
+bool tsdbNextDataBlock(TsdbQueryHandleT *pQueryHandle);
 
-#define TSQL_SO_ASC   1
-#define TSQL_SO_DESC  0
+/**
+ * Get current data block information
+ *
+ * @param pQueryHandle
+ * @return
+ */
+SDataBlockInfo tsdbRetrieveDataBlockInfo(TsdbQueryHandleT *pQueryHandle);
+
+/**
+ *
+ * Get the pre-calculated information w.r.t. current data block.
+ *
+ * In case of data block in cache, the pBlockStatis will always be NULL.
+ * If a block is not completed loaded from disk, the pBlockStatis will be NULL.
+
+ * @pBlockStatis the pre-calculated value for current data blocks. if the block is a cache block, always return 0
+ * @return
+ */
+int32_t tsdbRetrieveDataBlockStatisInfo(TsdbQueryHandleT *pQueryHandle, SDataStatis **pBlockStatis);
+
+/**
+ *
+ * The query condition with primary timestamp is passed to iterator during its constructor function,
+ * the returned data block must be satisfied with the time window condition in any cases,
+ * which means the SData data block is not actually the completed disk data blocks.
+ *
+ * @param pQueryHandle      query handle
+ * @param pColumnIdList     required data columns id list
+ * @return
+ */
+SArray *tsdbRetrieveDataBlock(TsdbQueryHandleT *pQueryHandle, SArray *pColumnIdList);
+
+/**
+ * todo remove this function later
+ * @param pQueryHandle
+ * @param pIdList
+ * @return
+ */
+SArray *tsdbRetrieveDataRow(TsdbQueryHandleT *pQueryHandle, SArray *pIdList, SQueryRowCond *pCond);
+
+/**
+ *  Get iterator for super tables, of which tags values satisfy the tag filter info
+ *
+ *  NOTE: the tagFilterStr is an bin-expression for tag filter, such as ((tag_col = 5) and (tag_col2 > 7))
+ *  The filter string is sent from client directly.
+ *  The build of the tags filter expression from string is done in the iterator generating function.
+ *
+ * @param pCond         query condition
+ * @param pTagFilterStr tag filter info
+ * @return
+ */
+TsdbQueryHandleT *tsdbQueryFromTagConds(STsdbQueryCond *pCond, int16_t stableId, const char *pTagFilterStr);
+
+/**
+ * Get the qualified tables for (super) table query.
+ * Used to handle the super table projection queries, the last_row query, the group by on normal columns query,
+ * the interpolation query, and timestamp-comp query for join processing.
+ *
+ * @param pQueryHandle
+ * @return table sid list. the invoker is responsible for the release of this the sid list.
+ */
+SArray *tsdbGetTableList(TsdbQueryHandleT *pQueryHandle);
+
+/**
+ * Get the qualified table id for a super table according to the tag query expression.
+ * @param stableid. super table sid
+ * @param pTagCond. tag query condition
+ */
+int32_t tsdbQuerySTableByTagCond(TsdbRepoT *tsdb, uint64_t uid, const char *pTagCond, size_t len,
+                                 int16_t tagNameRelType, const char *tbnameCond, STableGroupInfo *pGroupList,
+                                 SColIndex *pColIndex, int32_t numOfCols);
+
+/**
+ * create the table group result including only one table, used to handle the normal table query
+ *
+ * @param tsdb        tsdbHandle
+ * @param uid         table uid
+ * @param pGroupInfo  the generated result
+ * @return
+ */
+int32_t tsdbGetOneTableGroup(TsdbRepoT *tsdb, uint64_t uid, STableGroupInfo *pGroupInfo);
+
+/**
+ * clean up the query handle
+ * @param queryHandle
+ */
+void tsdbCleanupQueryHandle(TsdbQueryHandleT queryHandle);
 
 #ifdef __cplusplus
 }
 #endif
 
-#endif
+#endif  // _TD_TSDB_H_

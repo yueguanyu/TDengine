@@ -30,13 +30,14 @@
 
 #include "taos.h"
 #include "taosmsg.h"
-#include "tglobalcfg.h"
 #include "tsclient.h"
-#include "tsdb.h"
+#include "taosdef.h"
 #include "tutil.h"
 
 #define COMMAND_SIZE 65536
 #define DEFAULT_DUMP_FILE "taosdump.sql"
+
+#define MAX_DBS  100
 
 int  converStringToReadable(char *str, int size, char *buf, int bufsize);
 int  convertNCharToReadable(char *str, int size, char *buf, int bufsize);
@@ -116,8 +117,8 @@ typedef struct {
 } SDbInfo;
 
 typedef struct {
-  char name[TSDB_METER_NAME_LEN + 1];
-  char metric[TSDB_METER_NAME_LEN + 1];
+  char name[TSDB_TABLE_NAME_LEN + 1];
+  char metric[TSDB_TABLE_NAME_LEN + 1];
 } STableRecord;
 
 typedef struct {
@@ -169,7 +170,7 @@ static struct argp_option options[] = {
   {0}};
 
 /* Used by main to communicate with parse_opt. */
-struct arguments {
+typedef struct SDumpArguments {
   // connection option
   char *host;
   char *user;
@@ -194,13 +195,13 @@ struct arguments {
   char **arg_list;
   int arg_list_len;
   bool isDumpIn;
-};
+} SDumpArguments;
 
 /* Parse a single option. */
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
   /* Get the input argument from argp_parse, which we
      know is a pointer to our arguments structure. */
-  struct arguments *arguments = state->input;
+  SDumpArguments *arguments = state->input;
   wordexp_t full_path;
 
   switch (key) {
@@ -297,31 +298,31 @@ char *command = NULL;
 char *lcommand = NULL;
 char *buffer = NULL;
 
-int taosDumpOut(struct arguments *arguments);
+int taosDumpOut(SDumpArguments *arguments);
 
-int taosDumpIn(struct arguments *arguments);
+int taosDumpIn(SDumpArguments *arguments);
 
 void taosDumpCreateDbClause(SDbInfo *dbInfo, bool isDumpProperty, FILE *fp);
 
-int taosDumpDb(SDbInfo *dbInfo, struct arguments *arguments, FILE *fp);
+int taosDumpDb(SDbInfo *dbInfo, SDumpArguments *arguments, FILE *fp);
 
-void taosDumpCreateTableClause(STableDef *tableDes, int numOfCols, struct arguments *arguments, FILE *fp);
+void taosDumpCreateTableClause(STableDef *tableDes, int numOfCols, SDumpArguments *arguments, FILE *fp);
 
-void taosDumpCreateMTableClause(STableDef *tableDes, char *metric, int numOfCols, struct arguments *arguments,
+void taosDumpCreateMTableClause(STableDef *tableDes, char *metric, int numOfCols, SDumpArguments *arguments,
                                    FILE *fp);
 
-int32_t taosDumpTable(char *table, char *metric, struct arguments *arguments, FILE *fp);
+int32_t taosDumpTable(char *table, char *metric, SDumpArguments *arguments, FILE *fp);
 
-int32_t taosDumpMetric(char *metric, struct arguments *arguments, FILE *fp);
+int32_t taosDumpMetric(char *metric, SDumpArguments *arguments, FILE *fp);
 
-int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments);
+int taosDumpTableData(FILE *fp, char *tbname, SDumpArguments *arguments);
 
-int taosCheckParam(struct arguments *arguments);
+int taosCheckParam(SDumpArguments *arguments);
 
 void taosFreeDbInfos();
 
 int main(int argc, char *argv[]) {
-  struct arguments arguments = {
+  SDumpArguments arguments = {
     // connection option
     NULL, "root", "taosdata", 0,
     // output file
@@ -360,7 +361,7 @@ int main(int argc, char *argv[]) {
 
 void taosFreeDbInfos() {
   if (dbInfos == NULL) return;
-  for (int i = 0; i < tsMaxDbs; i++) tfree(dbInfos[i]);
+  for (int i = 0; i < MAX_DBS; i++) tfree(dbInfos[i]);
   tfree(dbInfos);
 }
 
@@ -384,14 +385,13 @@ int taosGetTableRecordInfo(char *table, STableRecordInfo *pTableRecordInfo) {
 
   TAOS_FIELD *fields = taos_fetch_fields(result);
 
-  while ((row = taos_fetch_row(result)) != NULL) {
+  if ((row = taos_fetch_row(result)) != NULL) {
     isSet = true;
     pTableRecordInfo->isMetric = false;
     strncpy(pTableRecordInfo->tableRecord.name, (char *)row[TSDB_SHOW_TABLES_NAME_INDEX],
             fields[TSDB_SHOW_TABLES_NAME_INDEX].bytes);
     strncpy(pTableRecordInfo->tableRecord.metric, (char *)row[TSDB_SHOW_TABLES_METRIC_INDEX],
             fields[TSDB_SHOW_TABLES_METRIC_INDEX].bytes);
-    break;
   }
 
   taos_free_result(result);
@@ -411,11 +411,10 @@ int taosGetTableRecordInfo(char *table, STableRecordInfo *pTableRecordInfo) {
     return -1;
   }
 
-  while ((row = taos_fetch_row(result)) != NULL) {
+  if ((row = taos_fetch_row(result)) != NULL) {
     isSet = true;
     pTableRecordInfo->isMetric = true;
     strcpy(pTableRecordInfo->tableRecord.metric, table);
-    break;
   }
 
   taos_free_result(result);
@@ -427,7 +426,7 @@ int taosGetTableRecordInfo(char *table, STableRecordInfo *pTableRecordInfo) {
   return -1;
 }
 
-int taosDumpOut(struct arguments *arguments) {
+int taosDumpOut(SDumpArguments *arguments) {
   TAOS_ROW row;
   char *temp = NULL;
   FILE *fp = NULL;
@@ -440,7 +439,7 @@ int taosDumpOut(struct arguments *arguments) {
     return -1;
   }
 
-  dbInfos = (SDbInfo **)calloc(tsMaxDbs, sizeof(SDbInfo *));
+  dbInfos = (SDbInfo **)calloc(MAX_DBS, sizeof(SDbInfo *));
   if (dbInfos == NULL) {
     fprintf(stderr, "failed to allocate memory\n");
     goto _exit_failure;
@@ -605,7 +604,7 @@ void taosDumpCreateDbClause(SDbInfo *dbInfo, bool isDumpProperty, FILE *fp) {
   fprintf(fp, "%s\n\n", buffer);
 }
 
-int taosDumpDb(SDbInfo *dbInfo, struct arguments *arguments, FILE *fp) {
+int taosDumpDb(SDbInfo *dbInfo, SDumpArguments *arguments, FILE *fp) {
   TAOS_ROW row;
   int fd = -1;
   STableRecord tableRecord;
@@ -663,7 +662,7 @@ int taosDumpDb(SDbInfo *dbInfo, struct arguments *arguments, FILE *fp) {
   return 0;
 }
 
-void taosDumpCreateTableClause(STableDef *tableDes, int numOfCols, struct arguments *arguments, FILE *fp) {
+void taosDumpCreateTableClause(STableDef *tableDes, int numOfCols, SDumpArguments *arguments, FILE *fp) {
   char *pstr = NULL;
   pstr = buffer;
   int counter = 0;
@@ -706,7 +705,7 @@ void taosDumpCreateTableClause(STableDef *tableDes, int numOfCols, struct argume
   fprintf(fp, "%s\n\n", buffer);
 }
 
-void taosDumpCreateMTableClause(STableDef *tableDes, char *metric, int numOfCols, struct arguments *arguments,
+void taosDumpCreateMTableClause(STableDef *tableDes, char *metric, int numOfCols, SDumpArguments *arguments,
                                 FILE *fp) {
   char *pstr = NULL;
   pstr = buffer;
@@ -789,7 +788,7 @@ int taosGetTableDes(char *table, STableDef *tableDes) {
   return count;
 }
 
-int32_t taosDumpTable(char *table, char *metric, struct arguments *arguments, FILE *fp) {
+int32_t taosDumpTable(char *table, char *metric, SDumpArguments *arguments, FILE *fp) {
   int count = 0;
 
   STableDef *tableDes = (STableDef *)calloc(1, sizeof(STableDef) + sizeof(SColDes) * TSDB_MAX_COLUMNS);
@@ -797,7 +796,10 @@ int32_t taosDumpTable(char *table, char *metric, struct arguments *arguments, FI
   if (metric != NULL && metric[0] != '\0') {  // dump metric definition
     count = taosGetTableDes(metric, tableDes);
 
-    if (count < 0) return -1;
+    if (count < 0) {
+      free(tableDes);
+      return -1;
+    }
 
     taosDumpCreateTableClause(tableDes, count, arguments, fp);
 
@@ -805,22 +807,30 @@ int32_t taosDumpTable(char *table, char *metric, struct arguments *arguments, FI
 
     count = taosGetTableDes(table, tableDes);
 
-    if (count < 0) return -1;
+    if (count < 0) {
+      free(tableDes);
+      return -1;
+    }
 
     taosDumpCreateMTableClause(tableDes, metric, count, arguments, fp);
 
   } else {  // dump table definition
     count = taosGetTableDes(table, tableDes);
 
-    if (count < 0) return -1;
+    if (count < 0) {
+      free(tableDes);
+      return -1;
+    }
 
     taosDumpCreateTableClause(tableDes, count, arguments, fp);
   }
 
+  free(tableDes);
+
   return taosDumpTableData(fp, table, arguments);
 }
 
-int32_t taosDumpMetric(char *metric, struct arguments *arguments, FILE *fp) {
+int32_t taosDumpMetric(char *metric, SDumpArguments *arguments, FILE *fp) {
   TAOS_ROW row = NULL;
   int fd = -1;
   STableRecord tableRecord;
@@ -869,7 +879,7 @@ int32_t taosDumpMetric(char *metric, struct arguments *arguments, FILE *fp) {
   return 0;
 }
 
-int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments) {
+int taosDumpTableData(FILE *fp, char *tbname, SDumpArguments *arguments) {
   /* char       temp[MAX_COMMAND_SIZE] = "\0"; */
   int count = 0;
   char *pstr = NULL;
@@ -879,7 +889,7 @@ int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments) {
 
   if (arguments->schemaonly) return 0;
 
-  sprintf(command, "select * from %s where _c0 >= %ld and _c0 <= %ld order by _c0 asc", tbname, arguments->start_time,
+  sprintf(command, "select * from %s where _c0 >= %" PRId64 " and _c0 <= %" PRId64 " order by _c0 asc", tbname, arguments->start_time,
           arguments->end_time);
   if (taos_query(taos, command) != 0) {
     fprintf(stderr, "failed to run command %s, reason: %s\n", command, taos_errstr(taos));
@@ -933,13 +943,13 @@ int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments) {
           pstr += sprintf(pstr, "%d", *((int *)row[col]));
           break;
         case TSDB_DATA_TYPE_BIGINT:
-          pstr += sprintf(pstr, "%ld", *((int64_t *)row[col]));
+          pstr += sprintf(pstr, "%" PRId64, *((int64_t *)row[col]));
           break;
         case TSDB_DATA_TYPE_FLOAT:
-          pstr += sprintf(pstr, "%f", *((float *)row[col]));
+          pstr += sprintf(pstr, "%f", GET_FLOAT_VAL(row[col]));
           break;
         case TSDB_DATA_TYPE_DOUBLE:
-          pstr += sprintf(pstr, "%f", *((double *)row[col]));
+          pstr += sprintf(pstr, "%f", GET_DOUBLE_VAL(row[col]));
           break;
         case TSDB_DATA_TYPE_BINARY:
           *(pstr++) = '\'';
@@ -952,7 +962,7 @@ int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments) {
           pstr += sprintf(pstr, "\'%s\'", tbuf);
           break;
         case TSDB_DATA_TYPE_TIMESTAMP:
-          pstr += sprintf(pstr, "%ld", *(int64_t *)row[col]);
+          pstr += sprintf(pstr, "%" PRId64, *(int64_t *)row[col]);
           break;
         default:
           break;
@@ -979,7 +989,7 @@ int taosDumpTableData(FILE *fp, char *tbname, struct arguments *arguments) {
   return 0;
 }
 
-int taosCheckParam(struct arguments *arguments) {
+int taosCheckParam(SDumpArguments *arguments) {
   if (arguments->all_databases && arguments->databases) {
     fprintf(stderr, "conflict option --all-databases and --databases\n");
     return -1;
@@ -1064,7 +1074,7 @@ void taosReplaceCtrlChar(char *str) {
   *pstr = '\0';
 }
 
-int taosDumpIn(struct arguments *arguments) {
+int taosDumpIn(SDumpArguments *arguments) {
   assert(arguments->isDumpIn);
 
   int     tsize = 0;
@@ -1134,7 +1144,7 @@ int taosDumpIn(struct arguments *arguments) {
         }
         taosReplaceCtrlChar(tcommand);
         if (taos_query(taos, tcommand) != 0)
-          fprintf(stderr, "linenu: %ld  failed to run command %s reason:%s \ncontinue...\n", linenu, command,
+          fprintf(stderr, "linenu: %" PRId64 " failed to run command %s reason:%s \ncontinue...\n", linenu, command,
                   taos_errstr(taos));
 
         pstr = command;
@@ -1182,7 +1192,7 @@ int taosDumpIn(struct arguments *arguments) {
       }
       taosReplaceCtrlChar(tcommand);
       if (taos_query(taos, tcommand) != 0)
-        fprintf(stderr, "linenu:%ld failed to run command %s reason: %s \ncontinue...\n", linenu, command,
+        fprintf(stderr, "linenu:%" PRId64 " failed to run command %s reason: %s \ncontinue...\n", linenu, command,
                 taos_errstr(taos));
     }
 
@@ -1205,7 +1215,7 @@ int taosDumpIn(struct arguments *arguments) {
     }
     taosReplaceCtrlChar(lcommand);
     if (taos_query(taos, tcommand) != 0)
-      fprintf(stderr, "linenu:%ld failed to run command %s reason:%s \ncontinue...\n", linenu, command,
+      fprintf(stderr, "linenu:%" PRId64 " failed to run command %s reason:%s \ncontinue...\n", linenu, command,
               taos_errstr(taos));
   }
 

@@ -19,6 +19,7 @@
 #include "os.h"
 #include "shell.h"
 #include "shellCommand.h"
+#include "tglobal.h"
 #include "ttime.h"
 #include "tutil.h"
 
@@ -90,20 +91,12 @@ static void shellParseDirectory(const char *directoryName, const char *prefix, c
 
 static void shellCheckTablesSQLFile(const char *directoryName)
 {
-  char cmd[1024] = { 0 };
-  sprintf(cmd, "ls %s/tables.sql", directoryName);
+  sprintf(shellTablesSQLFile, "%s/tables.sql", directoryName);
 
-  FILE *fp = popen(cmd, "r");
-  if (fp == NULL) {
-    fprintf(stderr, "ERROR: failed to execute:%s, error:%s\n", cmd, strerror(errno));
-    exit(0);
+  struct stat fstat;
+  if (stat(shellTablesSQLFile, &fstat) < 0) {
+    shellTablesSQLFile[0] = 0;
   }
-
-  while (fscanf(fp, "%s", shellTablesSQLFile)) {
-    break;
-  }
-
-  pclose(fp);
 }
 
 static void shellMallocSQLFiles()
@@ -149,6 +142,7 @@ static void shellSourceFile(TAOS *con, char *fptr) {
 
   if (wordexp(fptr, &full_path, 0) != 0) {
     fprintf(stderr, "ERROR: illegal file name\n");
+    free(cmd);
     return;
   }
 
@@ -227,7 +221,7 @@ void* shellImportThreadFp(void *arg)
   return NULL;
 }
 
-static void shellRunImportThreads(struct arguments* args)
+static void shellRunImportThreads(SShellArguments* args)
 {
   pthread_attr_t thattr;
   ShellThreadObj *threadObj = (ShellThreadObj *)calloc(args->threadNum, sizeof(ShellThreadObj));
@@ -235,7 +229,7 @@ static void shellRunImportThreads(struct arguments* args)
     ShellThreadObj *pThread = threadObj + t;
     pThread->threadIndex = t;
     pThread->totalThreads = args->threadNum;
-    pThread->taos = taos_connect(args->host, args->user, args->password, args->database, tsMgmtShellPort);
+    pThread->taos = taos_connect(args->host, args->user, args->password, args->database, tsDnodeShellPort);
     if (pThread->taos == NULL) {
       fprintf(stderr, "ERROR: thread:%d failed connect to TDengine, error:%s\n", pThread->threadIndex, taos_errstr(pThread->taos));
       exit(0);
@@ -260,7 +254,7 @@ static void shellRunImportThreads(struct arguments* args)
   free(threadObj);
 }
 
-void source_dir(TAOS* con, struct arguments* args) {
+void source_dir(TAOS* con, SShellArguments* args) {
   shellGetDirectoryFileList(args->dir);
   int64_t start = taosGetTimestampMs();
 

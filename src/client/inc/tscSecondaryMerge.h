@@ -20,9 +20,9 @@
 extern "C" {
 #endif
 
+#include "qextbuffer.h"
+#include "qfill.h"
 #include "taosmsg.h"
-#include "textbuffer.h"
-#include "tinterpolation.h"
 #include "tlosertree.h"
 #include "tsclient.h"
 
@@ -60,7 +60,7 @@ typedef struct SLocalReducer {
   char *                 prevRowOfInput;
   tFilePage *            pResultBuf;
   int32_t                nResultBufSize;
-  char *                 pBufForInterpo;  // intermediate buffer for interpolation
+//  char *                 pBufForInterpo;  // intermediate buffer for interpolation
   tFilePage *            pTempBuffer;
   struct SQLFunctionCtx *pCtx;
   int32_t                rowSize;     // size of each intermediate result.
@@ -68,9 +68,9 @@ typedef struct SLocalReducer {
   bool                   hasPrevRow;  // cannot be released
   bool                   hasUnprocessedRow;
   tOrderDescriptor *     pDesc;
-  tColModel *            resColModel;
+  SColumnModel *         resColModel;
   tExtMemBuffer **       pExtMemBuffer;      // disk-based buffer
-  SInterpolationInfo     interpolationInfo;  // interpolation support structure
+  SFillInfo*             pFillInfo;         // interpolation support structure
   char *                 pFinalRes;          // result data after interpo
   tFilePage *            discardData;
   SResultInfo *          pResInfo;
@@ -90,21 +90,21 @@ typedef struct SSubqueryState {
 } SSubqueryState;
 
 typedef struct SRetrieveSupport {
-  tExtMemBuffer **  pExtMemBuffer;    // for build loser tree
+  tExtMemBuffer **  pExtMemBuffer;     // for build loser tree
   tOrderDescriptor *pOrderDescriptor;
-  tColModel *       pFinalColModel;   // colModel for final result
+  SColumnModel *    pFinalColModel;    // colModel for final result
   SSubqueryState *  pState;
   int32_t           subqueryIndex;     // index of current vnode in vnode list
   SSqlObj *         pParentSqlObj;
-  tFilePage *       localBuffer;  // temp buffer, there is a buffer for each vnode to
-  uint32_t          numOfRetry;   // record the number of retry times
+  tFilePage *       localBuffer;       // temp buffer, there is a buffer for each vnode to
+  uint32_t          numOfRetry;        // record the number of retry times
   pthread_mutex_t   queryMutex;
 } SRetrieveSupport;
 
 int32_t tscLocalReducerEnvCreate(SSqlObj *pSql, tExtMemBuffer ***pMemBuffer, tOrderDescriptor **pDesc,
-                                 tColModel **pFinalModel, uint32_t nBufferSize);
+                                 SColumnModel **pFinalModel, uint32_t nBufferSize);
 
-void tscLocalReducerEnvDestroy(tExtMemBuffer **pMemBuffer, tOrderDescriptor *pDesc, tColModel *pFinalModel,
+void tscLocalReducerEnvDestroy(tExtMemBuffer **pMemBuffer, tOrderDescriptor *pDesc, SColumnModel *pFinalModel,
                                int32_t numOfVnodes);
 
 int32_t saveToBuffer(tExtMemBuffer *pMemoryBuf, tOrderDescriptor *pDesc, tFilePage *pPage, void *data,
@@ -116,11 +116,11 @@ int32_t tscFlushTmpBuffer(tExtMemBuffer *pMemoryBuf, tOrderDescriptor *pDesc, tF
  * create local reducer to launch the second-stage reduce process at client site
  */
 void tscCreateLocalReducer(tExtMemBuffer **pMemBuffer, int32_t numOfBuffer, tOrderDescriptor *pDesc,
-                           tColModel *finalModel, SSqlCmd *pSqlCmd, SSqlRes *pRes);
+                           SColumnModel *finalModel, SSqlObj* pSql);
 
 void tscDestroyLocalReducer(SSqlObj *pSql);
 
-int32_t tscLocalDoReduce(SSqlObj *pSql);
+int32_t tscDoLocalMerge(SSqlObj *pSql);
 
 #ifdef __cplusplus
 }

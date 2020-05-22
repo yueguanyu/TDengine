@@ -11,16 +11,15 @@ debs/
 rpms/
 mac/
 *.pyc
+.mypy_cache
 *.tmp
+*.swp
 src/connector/nodejs/node_modules/
 src/connector/nodejs/out/
 tests/test/
 tests/taoshebei/
 tests/taoscsv/
 tests/taosdalipu/
-tests/sim/
-tests/script/
-tests/pytest/
 tests/jenkins/
 tests/hdfs/
 *.iml
@@ -34,3 +33,11 @@ taosdalipu/
 Target/
 *.failed
 *.sql
+sim/
+psim/
+pysim/
+*.out
+*DS_Store
+
+# Doxygen Generated files
+html/

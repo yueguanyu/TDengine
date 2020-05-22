@@ -14,7 +14,7 @@
  */
 
 #include "os.h"
-#include "tlog.h"
+#include "tscLog.h"
 #include "tsclient.h"
 #include "ttime.h"
 #include "ttimer.h"
@@ -23,8 +23,6 @@
 void  tscSaveSlowQueryFp(void *handle, void *tmrId);
 void *tscSlowQueryConn = NULL;
 bool  tscSlowQueryConnInitialized = false;
-TAOS *taos_connect_a(char *ip, char *user, char *pass, char *db, uint16_t port, void (*fp)(void *, TAOS_RES *, int),
-                     void *param, void **taos);
 
 void tscInitConnCb(void *param, TAOS_RES *result, int code) {
   char *sql = param;
@@ -145,7 +143,7 @@ void tscKillQuery(STscObj *pObj, uint32_t killId) {
 
   if (pSql == NULL) return;
 
-  tscTrace("%p query is killed, queryId:%d thandle:%p", pSql, killId, pSql->thandle);
+  tscTrace("%p query is killed, queryId:%d", pSql, killId);
   taos_stop_query(pSql);
 }
 
@@ -202,23 +200,23 @@ void tscKillStream(STscObj *pObj, uint32_t killId) {
     tscTrace("%p stream:%p is killed, streamId:%d", pStream->pSql, pStream, killId);
   }
 
-  taos_close_stream(pStream);
   if (pStream->callback) {
     pStream->callback(pStream->param);
   }
+  taos_close_stream(pStream);
 }
 
 char *tscBuildQueryStreamDesc(char *pMsg, STscObj *pObj) {
-  SQList *pQList = (SQList *)pMsg;
   char *  pMax = pMsg + TSDB_PAYLOAD_SIZE - 256;
-
-  SQDesc *pQdesc = pQList->qdesc;
+  
+  SQqueryList *pQList = (SQqueryList *)pMsg;
   pQList->numOfQueries = 0;
+
+  SQueryDesc *pQdesc = (SQueryDesc*)(pMsg + sizeof(SQqueryList));
 
   // We extract the lock to tscBuildHeartBeatMsg function.
   /* pthread_mutex_lock (&pObj->mutex); */
-
-  pMsg += sizeof(SQList);
+  pMsg += sizeof(SQqueryList);
   SSqlObj *pSql = pObj->sqlList;
   while (pSql) {
     /*
@@ -239,15 +237,16 @@ char *tscBuildQueryStreamDesc(char *pMsg, STscObj *pObj) {
     pQList->numOfQueries++;
     pQdesc++;
     pSql = pSql->next;
-    pMsg += sizeof(SQDesc);
+    pMsg += sizeof(SQueryDesc);
     if (pMsg > pMax) break;
   }
 
-  SSList *pSList = (SSList *)pMsg;
-  SSDesc *pSdesc = pSList->sdesc;
+  SStreamList *pSList = (SStreamList *)pMsg;
   pSList->numOfStreams = 0;
+  
+  SStreamDesc *pSdesc = (SStreamDesc*) (pMsg + sizeof(SStreamList));
 
-  pMsg += sizeof(SSList);
+  pMsg += sizeof(SStreamList);
   SSqlStream *pStream = pObj->streamList;
   while (pStream) {
     strncpy(pSdesc->sql, pStream->pSql->sqlstr, TSDB_SHOW_SQL_LEN - 1);
@@ -265,7 +264,7 @@ char *tscBuildQueryStreamDesc(char *pMsg, STscObj *pObj) {
     pSList->numOfStreams++;
     pSdesc++;
     pStream = pStream->next;
-    pMsg += sizeof(SSDesc);
+    pMsg += sizeof(SStreamDesc);
     if (pMsg > pMax) break;
   }
 
@@ -279,19 +278,19 @@ void tscKillConnection(STscObj *pObj) {
 
   SSqlObj *pSql = pObj->sqlList;
   while (pSql) {
-    taosStopRpcConn(pSql->thandle);
+    //taosStopRpcConn(pSql->thandle);
     pSql = pSql->next;
   }
 
   SSqlStream *pStream = pObj->streamList;
   while (pStream) {
+    SSqlStream *tmp = pStream->next;
     taos_close_stream(pStream);
-    pStream = pStream->next;
+    pStream = tmp;
   }
 
   pthread_mutex_unlock(&pObj->mutex);
 
-  taos_close(pObj);
-
   tscTrace("connection:%p is killed", pObj);
+  taos_close(pObj);
 }

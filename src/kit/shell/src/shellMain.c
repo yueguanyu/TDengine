@@ -62,7 +62,7 @@ int checkVersion() {
 }
 
 // Global configurations
-struct arguments args = {
+SShellArguments args = {
   .host = NULL,
   .password = NULL,
   .user = NULL,
@@ -95,8 +95,10 @@ int main(int argc, char* argv[]) {
     exit(EXIT_FAILURE);
   }
 
-  /* Interupt handler. */
+  /* Interrupt handler. */
   struct sigaction act;
+  memset(&act, 0, sizeof(struct sigaction));
+  
   act.sa_handler = interruptHandler;
   sigaction(SIGTERM, &act, NULL);
   sigaction(SIGINT, &act, NULL);

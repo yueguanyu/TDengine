@@ -14,12 +14,12 @@
  */
 
 #define __USE_XOPEN
-
 #include "os.h"
-
+#include "tglobal.h"
 #include "shell.h"
 #include "shellCommand.h"
 #include "tkey.h"
+#include "tulog.h"
 
 #define OPT_ABORT 1 /* �Cabort */
 
@@ -50,7 +50,7 @@ static struct argp_option options[] = {
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
   /* Get the input argument from argp_parse, which we
   know is a pointer to our arguments structure. */
-  struct arguments *arguments = state->input;
+  SShellArguments *arguments = state->input;
   wordexp_t full_path;
 
   switch (key) {
@@ -62,7 +62,13 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       if (arg) arguments->password = arg;
       break;
     case 'P':
-      tsMgmtShellPort = atoi(arg);
+      if (arg) {
+        tsDnodeShellPort = atoi(arg);
+      } else {
+        fprintf(stderr, "Invalid port\n");
+        return -1;
+      }
+
       break;
     case 't':
       arguments->timezone = arg;
@@ -101,7 +107,12 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
       wordfree(&full_path);
       break;
     case 'T':
-      arguments->threadNum = atoi(arg);
+      if (arg) {
+        arguments->threadNum = atoi(arg);
+      } else {
+        fprintf(stderr, "Invalid number of threads\n");
+        return -1;
+      }
       break;
     case 'd':
       arguments->database = arg;
@@ -118,14 +129,10 @@ static error_t parse_opt(int key, char *arg, struct argp_state *state) {
 /* Our argp parser. */
 static struct argp argp = {options, parse_opt, args_doc, doc};
 
-void shellParseArgument(int argc, char *argv[], struct arguments *arguments) {
-  char verType[32] = {0};
-  #ifdef CLUSTER
-    sprintf(verType, "enterprise version: %s\n", version);
-  #else
-    sprintf(verType, "community version: %s\n", version);
-  #endif
-  
+void shellParseArgument(int argc, char *argv[], SShellArguments *arguments) {
+  static char verType[32] = {0};
+  sprintf(verType, "version: %s\n", version);
+
   argp_program_version = verType;
   
   argp_parse(&argp, argc, argv, 0, 0, arguments);
@@ -296,9 +303,10 @@ void *shellLoopQuery(void *arg) {
 
   char *command = malloc(MAX_COMMAND_SIZE);
   if (command == NULL){
-    tscError("failed to malloc command");
+    uError("failed to malloc command");
     return NULL;
   }
+  
   while (1) {
     // Read command from shell.
 
@@ -308,11 +316,16 @@ void *shellLoopQuery(void *arg) {
     reset_terminal_mode();
 
     // Run the command
-    shellRunCommand(con, command);
+    if (shellRunCommand(con, command) != 0) {
+      break;
+    }
   }
+  
+  tfree(command);
+  exitShell();
 
   pthread_cleanup_pop(1);
-
+  
   return NULL;
 }
 
@@ -491,6 +504,7 @@ void showOnScreen(Command *cmd) {
 void cleanup_handler(void *arg) { tcsetattr(0, TCSANOW, &oldtio); }
 
 void exitShell() {
-  tcsetattr(0, TCSANOW, &oldtio);
+  /*int32_t ret =*/ tcsetattr(STDIN_FILENO, TCSANOW, &oldtio);
+  taos_cleanup();
   exit(EXIT_SUCCESS);
 }

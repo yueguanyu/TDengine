@@ -96,7 +96,8 @@ def _crow_nchar_to_python(data, num_of_rows, nbytes=None, micro=False):
     for i in range(abs(num_of_rows)):
         try:
             if num_of_rows >= 0:
-                res.append( (ctypes.cast(data+nbytes*(abs(num_of_rows - i -1)),  ctypes.POINTER(ctypes.c_wchar * (nbytes//4))))[0].value )
+                tmpstr = ctypes.c_char_p(data)
+                res.append( tmpstr.value.decode() )
             else:
                 res.append( (ctypes.cast(data+nbytes*i,  ctypes.POINTER(ctypes.c_wchar * (nbytes//4))))[0].value )
         except ValueError:
@@ -144,6 +145,9 @@ class CTaosInterface(object):
     libtaos.taos_use_result.restype = ctypes.c_void_p
     libtaos.taos_fetch_row.restype = ctypes.POINTER(ctypes.c_void_p)
     libtaos.taos_errstr.restype = ctypes.c_char_p
+    libtaos.taos_subscribe.restype = ctypes.c_void_p
+    libtaos.taos_consume.restype = ctypes.c_void_p
+    libtaos.taos_fetch_lengths.restype = ctypes.c_void_p
 
     def __init__(self, config=None):
         '''
@@ -253,6 +257,41 @@ class CTaosInterface(object):
         return CTaosInterface.libtaos.taos_affected_rows(connection)
 
     @staticmethod
+    def subscribe(connection, restart, topic, sql, interval):
+        """Create a subscription
+         @restart boolean, 
+         @sql string, sql statement for data query, must be a 'select' statement.
+         @topic string, name of this subscription
+        """
+        return ctypes.c_void_p(CTaosInterface.libtaos.taos_subscribe(
+            connection,
+            1 if restart else 0,
+            ctypes.c_char_p(topic.encode('utf-8')),
+            ctypes.c_char_p(sql.encode('utf-8')),
+            None,
+            None,
+            interval))
+
+    @staticmethod
+    def consume(sub):
+        """Consume data of a subscription
+        """
+        result = ctypes.c_void_p(CTaosInterface.libtaos.taos_consume(sub))
+        fields = []
+        pfields = CTaosInterface.fetchFields(result)
+        for i in range(CTaosInterface.libtaos.taos_num_fields(result)):
+            fields.append({'name': pfields[i].name.decode('utf-8'),
+                           'bytes': pfields[i].bytes,
+                           'type': ord(pfields[i].type)})
+        return result, fields
+
+    @staticmethod
+    def unsubscribe(sub, keepProgress):
+        """Cancel a subscription
+        """
+        CTaosInterface.libtaos.taos_unsubscribe(sub, 1 if keepProgress else 0)
+
+    @staticmethod
     def useResult(connection):
         '''Use result after calling self.query
         '''
@@ -277,13 +316,18 @@ class CTaosInterface(object):
 
         isMicro = (CTaosInterface.libtaos.taos_result_precision(result) == FieldType.C_TIMESTAMP_MICRO)
         blocks = [None] * len(fields)
+        fieldL = CTaosInterface.libtaos.taos_fetch_lengths(result)
+        fieldLen = [ele for ele in ctypes.cast(fieldL,  ctypes.POINTER(ctypes.c_int))[:len(fields)]]
         for i in range(len(fields)):
             data = ctypes.cast(pblock, ctypes.POINTER(ctypes.c_void_p))[i]
+            if data == None:
+                blocks[i] = [None] * num_of_rows
+                continue
 
             if fields[i]['type'] not in _CONVERT_FUNC:
                 raise DatabaseError("Invalid data type returned from database")
             
-            blocks[i] = _CONVERT_FUNC[fields[i]['type']](data, num_of_rows, fields[i]['bytes'], isMicro)
+            blocks[i] = _CONVERT_FUNC[fields[i]['type']](data, num_of_rows, fieldLen[i], isMicro)
 
         return blocks, abs(num_of_rows)
 

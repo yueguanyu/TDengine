@@ -27,10 +27,10 @@ void taosInitNote(int numOfNoteLines, int maxNotes, char* lable)
 
     if (strcasecmp(lable, "http_note") == 0) {
         pNote = &m_HttpNote;
-        sprintf(temp, "%s/httpnote", logDir);
+        sprintf(temp, "%s/httpnote", tsLogDir);
     } else if (strcasecmp(lable, "tsc_note") == 0) {
         pNote = &m_TscNote;        
-        sprintf(temp, "%s/tscnote-%d", logDir, getpid());
+        sprintf(temp, "%s/tscnote-%d", tsLogDir, getpid());
     } else {
         return;
     }
@@ -77,7 +77,7 @@ void taosUnLockNote(int fd, taosNoteInfo * pNote)
 
 void *taosThreadToOpenNewNote(void *param)
 {
-    char name[NOTE_FILE_NAME_LEN];
+    char name[NOTE_FILE_NAME_LEN * 2];
     taosNoteInfo * pNote = (taosNoteInfo *)param;
 
     pNote->taosNoteFlag ^= 1;
@@ -170,7 +170,7 @@ void taosGetNoteName(char *fn, taosNoteInfo * pNote)
 
 int taosOpenNoteWithMaxLines(char *fn, int maxLines, int maxNoteNum, taosNoteInfo * pNote)
 {
-    char name[NOTE_FILE_NAME_LEN] = "\0";
+    char name[NOTE_FILE_NAME_LEN * 2] = "\0";
     struct stat  notestat0, notestat1;
     int size;
 
@@ -231,8 +231,13 @@ void taosNotePrint(taosNoteInfo * pNote, const char * const format, ...)
     gettimeofday(&timeSecs, NULL);
     curTime = timeSecs.tv_sec;
     ptm = localtime_r(&curTime, &Tm);
-    len = sprintf(buffer, "%02d/%02d %02d:%02d:%02d.%06d %lx ", ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min, ptm->tm_sec, (int)timeSecs.tv_usec, pthread_self());
-
+#ifndef LINUX
+  len = sprintf(buffer, "%02d/%02d %02d:%02d:%02d.%06d 0x%lld ", ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour,
+                ptm->tm_min, ptm->tm_sec, (int)timeSecs.tv_usec, taosGetPthreadId());
+#else
+  len = sprintf(buffer, "%02d/%02d %02d:%02d:%02d.%06d %lx ", ptm->tm_mon + 1, ptm->tm_mday, ptm->tm_hour, ptm->tm_min,
+                ptm->tm_sec, (int)timeSecs.tv_usec, pthread_self());
+#endif
     va_start(argpointer, format);
     len += vsnprintf(buffer + len, MAX_NOTE_LINE_SIZE - len, format, argpointer);
     va_end(argpointer);

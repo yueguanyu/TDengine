@@ -13,26 +13,13 @@
  * along with this program. If not, see <http://www.gnu.org/licenses/>.
  */
 
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#include <pthread.h>
-#include <errno.h>
-#include <fcntl.h>
-#include <sys/types.h>
-#include <stdint.h>
-#include <locale.h>
-
+#define _DEFAULT_SOURCE
 #include "os.h"
-#include "tlog.h"
-#include "tsdb.h"
-#include "tglobalcfg.h"
-
-char configDir[TSDB_FILENAME_LEN] = "C:/TDengine/cfg";
-char tsDirectory[TSDB_FILENAME_LEN] = "C:/TDengine/data";
-char logDir[TSDB_FILENAME_LEN] = "C:/TDengine/log";
-char dataDir[TSDB_FILENAME_LEN] = "C:/TDengine/data";
-char scriptDir[TSDB_FILENAME_LEN] = "C:/TDengine/script";
+#include "taosdef.h"
+#include "tglobal.h"
+#include "ttimer.h"
+#include "tulog.h"
+#include "tutil.h"
 
 bool taosCheckPthreadValid(pthread_t thread) {
   return thread.p != NULL;
@@ -68,11 +55,19 @@ int taosSetSockOpt(int socketfd, int level, int optname, void *optval, int optle
 
 // add
 char interlocked_add_fetch_8(char volatile* ptr, char val) {
-  return _InterlockedExchangeAdd8(ptr, val) + val;
+  #ifdef _TD_GO_DLL_
+    return __sync_fetch_and_add(ptr, val) + val;
+  #else
+    return _InterlockedExchangeAdd8(ptr, val) + val;
+  #endif
 }
 
 short interlocked_add_fetch_16(short volatile* ptr, short val) {
-  return _InterlockedExchangeAdd16(ptr, val) + val;
+  #ifdef _TD_GO_DLL_
+    return __sync_fetch_and_add(ptr, val) + val;
+  #else
+    return _InterlockedExchangeAdd16(ptr, val) + val;
+  #endif
 }
 
 long interlocked_add_fetch_32(long volatile* ptr, long val) {
@@ -84,6 +79,7 @@ __int64 interlocked_add_fetch_64(__int64 volatile* ptr, __int64 val) {
 }
 
 // and
+#ifndef _TD_GO_DLL_
 char interlocked_and_fetch_8(char volatile* ptr, char val) {
   return _InterlockedAnd8(ptr, val) & val;
 }
@@ -91,6 +87,7 @@ char interlocked_and_fetch_8(char volatile* ptr, char val) {
 short interlocked_and_fetch_16(short volatile* ptr, short val) {
   return _InterlockedAnd16(ptr, val) & val;
 }
+#endif
 
 long interlocked_and_fetch_32(long volatile* ptr, long val) {
   return _InterlockedAnd(ptr, val) & val;
@@ -124,6 +121,7 @@ __int64 interlocked_fetch_and_64(__int64 volatile* ptr, __int64 val) {
 #endif
 
 // or
+#ifndef _TD_GO_DLL_
 char interlocked_or_fetch_8(char volatile* ptr, char val) {
   return _InterlockedOr8(ptr, val) | val;
 }
@@ -131,7 +129,7 @@ char interlocked_or_fetch_8(char volatile* ptr, char val) {
 short interlocked_or_fetch_16(short volatile* ptr, short val) {
   return _InterlockedOr16(ptr, val) | val;
 }
-
+#endif
 long interlocked_or_fetch_32(long volatile* ptr, long val) {
   return _InterlockedOr(ptr, val) | val;
 }
@@ -164,6 +162,7 @@ __int64 interlocked_fetch_or_64(__int64 volatile* ptr, __int64 val) {
 #endif
 
 // xor
+#ifndef _TD_GO_DLL_
 char interlocked_xor_fetch_8(char volatile* ptr, char val) {
   return _InterlockedXor8(ptr, val) ^ val;
 }
@@ -171,7 +170,7 @@ char interlocked_xor_fetch_8(char volatile* ptr, char val) {
 short interlocked_xor_fetch_16(short volatile* ptr, short val) {
   return _InterlockedXor16(ptr, val) ^ val;
 }
-
+#endif
 long interlocked_xor_fetch_32(long volatile* ptr, long val) {
   return _InterlockedXor(ptr, val) ^ val;
 }
@@ -203,12 +202,12 @@ __int64 interlocked_fetch_xor_64(__int64 volatile* ptr, __int64 val) {
 
 #endif
 
-void tsPrintOsInfo() {}
+void taosPrintOsInfo() {}
 
 void taosGetSystemTimezone() {
   // get and set default timezone
-  SGlobalConfig *cfg_timezone = tsGetConfigOption("timezone");
-  if (cfg_timezone && cfg_timezone->cfgStatus < TSDB_CFG_CSTATUS_DEFAULT) {
+  SGlobalCfg *cfg_timezone = taosGetConfigOption("timezone");
+  if (cfg_timezone && cfg_timezone->cfgStatus < TAOS_CFG_CSTATUS_DEFAULT) {
     char *tz = getenv("TZ");
     if (tz == NULL || strlen(tz) == 0) {
       strcpy(tsTimezone, "not configured");
@@ -216,28 +215,28 @@ void taosGetSystemTimezone() {
     else {
       strcpy(tsTimezone, tz);
     }
-    cfg_timezone->cfgStatus = TSDB_CFG_CSTATUS_DEFAULT;
-    pPrint("timezone not configured, use default");
+    cfg_timezone->cfgStatus = TAOS_CFG_CSTATUS_DEFAULT;
+    uPrint("timezone not configured, use default");
   }
 }
 
 void taosGetSystemLocale() {
   // get and set default locale
-  SGlobalConfig *cfg_locale = tsGetConfigOption("locale");
-  if (cfg_locale && cfg_locale->cfgStatus < TSDB_CFG_CSTATUS_DEFAULT) {
+  SGlobalCfg *cfg_locale = taosGetConfigOption("locale");
+  if (cfg_locale && cfg_locale->cfgStatus < TAOS_CFG_CSTATUS_DEFAULT) {
     char *locale = setlocale(LC_CTYPE, "chs");
     if (locale != NULL) {
       strncpy(tsLocale, locale, sizeof(tsLocale) / sizeof(tsLocale[0]));
-      cfg_locale->cfgStatus = TSDB_CFG_CSTATUS_DEFAULT;
-      pPrint("locale not configured, set to default:%s", tsLocale);
+      cfg_locale->cfgStatus = TAOS_CFG_CSTATUS_DEFAULT;
+      uPrint("locale not configured, set to default:%s", tsLocale);
     }
   }
 
-  SGlobalConfig *cfg_charset = tsGetConfigOption("charset");
-  if (cfg_charset && cfg_charset->cfgStatus < TSDB_CFG_CSTATUS_DEFAULT) {
+  SGlobalCfg *cfg_charset = taosGetConfigOption("charset");
+  if (cfg_charset && cfg_charset->cfgStatus < TAOS_CFG_CSTATUS_DEFAULT) {
     strcpy(tsCharset, "cp936");
-    cfg_charset->cfgStatus = TSDB_CFG_CSTATUS_DEFAULT;
-    pPrint("charset not configured, set to default:%s", tsCharset);
+    cfg_charset->cfgStatus = TAOS_CFG_CSTATUS_DEFAULT;
+    uPrint("charset not configured, set to default:%s", tsCharset);
   }
 }
 
@@ -397,3 +396,15 @@ char *strndup(const char *s, size_t n) {
 }
 
 void taosSetCoreDump() {}
+
+#ifdef _TD_GO_DLL_
+int64_t str2int64(char *str) {
+  char *endptr = NULL;
+  return strtoll(str, &endptr, 10);
+}
+
+uint64_t htonll(uint64_t val)
+{
+    return (((uint64_t) htonl(val)) << 32) + htonl(val >> 32);
+}
+#endif

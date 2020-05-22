@@ -20,6 +20,20 @@
 #include "ttimer.h"
 #include "tutil.h"
 
+#define tmrError(...)                                 \
+  do { if (tmrDebugFlag & DEBUG_ERROR) {              \
+    taosPrintLog("ERROR TMR ", tmrDebugFlag, __VA_ARGS__); \
+  } } while(0)
+
+#define tmrWarn(...)                                  \
+  do { if (tmrDebugFlag & DEBUG_WARN) {               \
+    taosPrintLog("WARN  TMR ", tmrDebugFlag, __VA_ARGS__); \
+  } } while(0)
+
+#define tmrTrace(...)                           \
+  do { if (tmrDebugFlag & DEBUG_TRACE) {        \
+    taosPrintLog("TMR ", tmrDebugFlag, __VA_ARGS__); \
+  } } while(0)
 
 #define TIMER_STATE_WAITING 0
 #define TIMER_STATE_EXPIRED 1
@@ -75,7 +89,7 @@ typedef struct time_wheel_t {
   tmr_obj_t**     slots;
 } time_wheel_t;
 
-uint32_t tmrDebugFlag = DEBUG_ERROR | DEBUG_WARN | DEBUG_FILE;
+int32_t tmrDebugFlag = 131;
 uint32_t taosMaxTmrCtrl = 512;
 
 static pthread_once_t  tmrModuleInit = PTHREAD_ONCE_INIT;
@@ -86,7 +100,6 @@ static void*           tmrQhandle;
 static int             numOfTmrCtrl = 0;
 
 int taosTmrThreads = 1;
-
 static uintptr_t nextTimerId = 0;
 
 static time_wheel_t wheels[] = {
@@ -558,4 +571,32 @@ void taosTmrCleanUp(void* handle) {
   numOfTmrCtrl--;
   unusedTmrCtrl = ctrl;
   pthread_mutex_unlock(&tmrCtrlMutex);
+
+  if (numOfTmrCtrl <=0) {
+    taosUninitTimer();
+    
+    taosCleanUpScheduler(tmrQhandle);
+
+    for (int i = 0; i < tListLen(wheels); i++) {
+      time_wheel_t* wheel = wheels + i;
+      pthread_mutex_destroy(&wheel->mutex); 
+      free(wheel->slots);
+    }
+
+    pthread_mutex_destroy(&tmrCtrlMutex);
+
+    for (size_t i = 0; i < timerMap.size; i++) {
+      timer_list_t* list = timerMap.slots + i;
+      tmr_obj_t* t = list->timers;
+      while (t != NULL) {
+        tmr_obj_t* next = t->mnext;
+        free(t);
+        t = next;
+      }
+    }
+    free(timerMap.slots);
+    free(tmrCtrls);
+
+    tmrTrace("timer module is cleaned up");
+  }
 }

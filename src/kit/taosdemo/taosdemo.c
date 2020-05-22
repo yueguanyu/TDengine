@@ -17,6 +17,7 @@
 
 #include <argp.h>
 #include <assert.h>
+#include <inttypes.h>
 
 #ifndef _ALPINE
 #include <error.h>
@@ -66,7 +67,7 @@ static struct argp_option options[] = {
   {0}};
 
 /* Used by main to communicate with parse_opt. */
-struct arguments {
+typedef struct DemoArguments {
   char  *host;
   uint16_t    port;
   char  *user;
@@ -86,13 +87,13 @@ struct arguments {
   int    num_of_DPT;
   int    abort;
   char **arg_list;
-};
+} SDemoArguments;
 
 /* Parse a single option. */
 static error_t parse_opt(int key, char *arg, struct argp_state *state) {
   /* Get the input argument from argp_parse, which we
      know is a pointer to our arguments structure. */
-  struct arguments *arguments = state->input;
+  SDemoArguments *arguments = state->input;
   wordexp_t full_path;
   char **sptr;
   switch (key) {
@@ -268,7 +269,7 @@ double getCurrentTime();
 void callBack(void *param, TAOS_RES *res, int code);
 
 int main(int argc, char *argv[]) {
-  struct arguments arguments = {NULL,            // host
+  SDemoArguments arguments = {NULL,            // host
                                 0,               // port
                                 "root",          // user
                                 "taosdata",      // password
@@ -339,6 +340,9 @@ int main(int argc, char *argv[]) {
   int count_data_type = 0;
   char dataString[512];
   bool do_aggreFunc = true;
+
+  memset(dataString, 0, 512);
+
   if (strcasecmp(data_type[0], "BINARY") == 0 || strcasecmp(data_type[0], "BOOL") == 0) {
     do_aggreFunc = false;
   }
@@ -351,6 +355,11 @@ int main(int argc, char *argv[]) {
   }
 
   FILE *fp = fopen(arguments.output_file, "a");
+  if (NULL == fp) {
+    fprintf(stderr, "Failed to open %s for writing\n", arguments.output_file);
+    return 1;
+  };
+  
   time_t tTime = time(NULL);
   struct tm tm = *localtime(&tTime);
 
@@ -570,7 +579,7 @@ void *readTable(void *sarg) {
     double totalT = 0;
     int count = 0;
     for (int i = 0; i < num_of_tables; i++) {
-      sprintf(command, "select %s from %s%d where ts>= %ld", aggreFunc[j], tb_prefix, i, sTime);
+      sprintf(command, "select %s from %s%d where ts>= %" PRId64, aggreFunc[j], tb_prefix, i, sTime);
 
       double t = getCurrentTime();
       if (taos_query(taos, command) != 0) {
@@ -625,7 +634,7 @@ void *readMetric(void *sarg) {
   fprintf(fp, "Querying On %d records:\n", totalData);
 
   for (int j = 0; j < n; j++) {
-    char condition[BUFFER_SIZE] = "\0";
+    char condition[BUFFER_SIZE - 30] = "\0";
     char tempS[BUFFER_SIZE] = "\0";
 
     int m = 10 < num_of_tables ? 10 : num_of_tables;
@@ -813,7 +822,7 @@ double getCurrentTime() {
 void generateData(char *res, char **data_type, int num_of_cols, int64_t timestamp, int len_of_binary) {
   memset(res, 0, MAX_DATA_SIZE);
   char *pstr = res;
-  pstr += sprintf(pstr, "(%ld", timestamp);
+  pstr += sprintf(pstr, "(%" PRId64, timestamp);
   int c = 0;
 
   for (; c < MAX_NUM_DATATYPE; c++) {
@@ -830,7 +839,7 @@ void generateData(char *res, char **data_type, int num_of_cols, int64_t timestam
     } else if (strcasecmp(data_type[i % c], "int") == 0) {
       pstr += sprintf(pstr, ", %d", (int)(rand() % 10)); 
     } else if (strcasecmp(data_type[i % c], "bigint") == 0) {
-      pstr += sprintf(pstr, ", %ld", rand() % 2147483648);
+      pstr += sprintf(pstr, ", %" PRId64, rand() % 2147483648);
     } else if (strcasecmp(data_type[i % c], "float") == 0) {
       pstr += sprintf(pstr, ", %10.4f", (float)(rand() / 1000));
     } else if (strcasecmp(data_type[i % c], "double") == 0) {
@@ -842,7 +851,7 @@ void generateData(char *res, char **data_type, int num_of_cols, int64_t timestam
     } else if (strcasecmp(data_type[i % c], "binary") == 0) {
       char s[len_of_binary];
       rand_string(s, len_of_binary);
-      pstr += sprintf(pstr, ", %s", s);
+      pstr += sprintf(pstr, ", \"%s\"", s);
     }
   }
 

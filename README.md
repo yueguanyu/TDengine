@@ -1,3 +1,6 @@
+[![Build Status](https://travis-ci.org/taosdata/TDengine.svg?branch=master)](https://travis-ci.org/taosdata/TDengine)
+[![Build status](https://ci.appveyor.com/api/projects/status/kf3pwh2or5afsgl9/branch/master?svg=true)](https://ci.appveyor.com/project/sangshuduo/tdengine-2n8ge/branch/master)
+
 [![TDengine](TDenginelogo.png)](https://www.taosdata.com)
 
 # What is TDengine？
@@ -45,10 +48,16 @@ mkdir build && cd build
 cmake .. && cmake --build .
 ```
 
-if compiling on an arm64 processor, you need add one parameter:
+To compile on an ARM processor (aarch64 or aarch32), please add option CPUTYPE as below:
 
+aarch64:
 ```cmd
-cmake .. -DARMVER=arm64 && cmake --build .
+cmake .. -DCPUTYPE=aarch64 && cmake --build .
+```
+
+aarch32:
+```cmd
+cmake .. -DCPUTYPE=aarch32 && cmake --build .
 ```
 
 # Quick Run
@@ -113,6 +122,10 @@ The TDengine community has also kindly built some of their own connectors! Follo
 - [Rust Connector](https://github.com/taosdata/TDengine/tree/master/tests/examples/rust)
 - [.Net Core Connector](https://github.com/maikebing/Maikebing.EntityFrameworkCore.Taos)
 
+# How to run the test cases and how to add a new test case?
+  TDengine's test framework and all test cases are fully open source.
+  Please refer to [this document](tests/How-To-Run-Test-And-How-To-Add-New-Test-Case.md) for how to run test and develop new test case.
+
 # TDengine Roadmap
 - Support event-driven stream computing
 - Support user defined functions
@@ -124,3 +137,8 @@ The TDengine community has also kindly built some of their own connectors! Follo
 # Contribute to TDengine
 
 Please follow the [contribution guidelines](CONTRIBUTING.md) to contribute to the project.
+
+# Join TDengine WeChat Group
+
+Add WeChat “tdengine” to join the group，you can communicate with other users.
+
